@@ -1,8 +1,10 @@
 # ElyraOps AI
 
+**Development update:** Phase 2 provides optional Gemini/PostgreSQL hybrid RAG. Phase 3A adds opt-in **local-only** bearer-token RBAC and scoped case queries. See [SECURITY_PHASE3.md](SECURITY_PHASE3.md) for setup and limitations. This is **not OIDC, PostgreSQL RLS, or production authentication**.
+
 **Enterprise Agentic Operations Platform** — an original, working **simulation-mode** portfolio prototype with a warm ivory/cream interface, evidence-backed triage, approval-gated recommendations, persistent case records, and traceable event history.
 
-> **Implementation status:** The default dashboard is a *local deterministic workflow simulator*. An optional LangGraph + FastAPI service (`agent_service/`) provides a genuine workflow graph and can call an LLM for the rationale when a model API key is configured. It does **not** implement autonomous business actions, vector RAG, a Java microservice, Kafka, production auth, or production deployment. Those features are in the roadmap. No payment is issued; no external business system is changed. Never use real customer records in this demo.
+> **Implementation status:** The default dashboard is a *local deterministic workflow simulator*. An optional LangGraph + FastAPI service (`agent_service/`) provides a genuine workflow graph and can call an LLM for the rationale when a model API key is configured. It does **not** implement autonomous business actions, a Java microservice, Kafka, production auth, or production deployment. Those features are in the roadmap. No payment is issued; no external business system is changed. Never use real customer records in this demo.
 
 ## Optional LangGraph + FastAPI extension
 
@@ -43,7 +45,7 @@ docker compose up --build -d
 curl http://localhost:8080/health
 ```
 
-Docker uses a named volume for the SQLite database. **Important:** This demonstration has **no authentication** or per-tenant authorization. Docker exposes port 8080; run behind private access controls or on your own trusted local machine. Do *not* expose it publicly until those controls are implemented.
+Docker uses a named volume for the SQLite database. **Important:** The default Docker demo remains unauthenticated. Optional Phase 3A guarded mode needs explicit setup and is not production-ready. Do *not* expose this demo publicly.
 
 ## HTTP API
 
