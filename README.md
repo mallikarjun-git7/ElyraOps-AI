@@ -1,100 +1,262 @@
-# ElyraOps AI
+# FlowRelay AI
 
-**Enterprise-style agentic operations prototype — a localhost-only, approval-gated demonstration.**
+### Distributed Job Processing, Reliable Webhook Delivery & AI-Assisted Failure Diagnosis
 
-ElyraOps AI turns a *synthetic* incident into a traceable recommendation: classify the case, retrieve relevant policy evidence, prepare a bounded resolution with LangGraph and optionally Gemini, and require a human decision before recording a **simulated** execution. It never issues a payment/refund, changes a real business system, or processes real customer data.
+**Java 21 · Spring Boot 3.3 · PostgreSQL 16 · React · TypeScript · Docker · Spring Security · Testcontainers**
 
-**[Architecture](docs/portfolio/ARCHITECTURE.md) · [2-minute demo](docs/portfolio/DEMO.md) · [Benchmark protocol](docs/portfolio/BENCHMARKS.md) · [Screenshots checklist](docs/portfolio/SCREENSHOTS.md) · [Limitations](docs/portfolio/LIMITATIONS.md)**
+[**Live Application**](https://flowrelay-ai-backend.onrender.com/) · [**Source Code**](https://github.com/mallikarjun-git7/FlowRelay/tree/feature/webhook-delivery) · [**Health Endpoint**](https://flowrelay-ai-backend.onrender.com/actuator/health)
 
-## What is implemented
+> **Access note:** The deployed dashboard currently requires administrator credentials. Public sign-up and a read-only guest demo are **not implemented**. The public health endpoint is accessible without authentication.
 
-| Layer | Verified implementation |
-| --- | --- |
-| User experience | Responsive HTML/CSS/JavaScript dashboard: incidents, policies, activity timeline, sign-in and simulated approvals |
-| API / orchestration | Python HTTP dashboard, FastAPI agent service, LangGraph triage → retrieval → resolution |
-| LLM | Gemini-backed, policy-grounded rationale when a private API key is supplied; deterministic offline mode exists |
-| Search | Hybrid PostgreSQL full-text + pgvector semantic search, rank fusion, evidence citations, domain filters |
-| Persistence | PostgreSQL cases and audit events; separate policy-vector table; local SQLite supports deterministic demo/knowledge paths |
-| Security demonstration | Local bearer-token roles, organization-scoped access, non-owner PostgreSQL runtime roles and enforced RLS on cases/events and RAG documents |
-| Reliability | Health/readiness endpoints, JSON request logs, correlation IDs, protected Prometheus-format metrics and bounded agent timeouts |
-| Deployment and CI | Local Docker Compose, non-root images, health checks, Python 3.12/3.13 tests, real PostgreSQL RLS CI and container smoke CI |
+## Overview
 
-See the [project architecture](docs/portfolio/ARCHITECTURE.md) for which component owns each action and where trust boundaries remain.
+**FlowRelay AI** is a database-backed background job processing platform built to explore the challenges behind dependable asynchronous systems: job durability, safe concurrent execution, retries, worker leases, dead-letter handling, operational visibility, and controlled webhook delivery.
 
-## See the workflow
+The application combines a Spring Boot REST backend, PostgreSQL-based job state and coordination, a React operations dashboard, and an optional AI-assisted diagnosis workflow for failed jobs. A multi-stage Docker build packages the React frontend into the Spring Boot application so they can be served from the same origin.
 
-1. Sign in as **Analyst** to the guarded local demo.
-2. Create a synthetic Billing case describing a duplicate subscription charge.
-3. Run the LangGraph investigation. Inspect retrieved **POL-001** evidence and the suggested finance-review action.
-4. Observe **Pending approval**. The Analyst cannot approve the case.
-5. Sign in as **Approver**, select **Approve simulation**, and inspect the recorded audit events. **No external refund is executed.**
-
-These steps were exercised with a local Docker deployment. Reproduce them using [DEMO.md](docs/portfolio/DEMO.md), which also describes screenshots and security precautions.
-
-## Application screenshots
-
-Real screenshots captured from the localhost-only ElyraOps AI demonstration using synthetic incident data.
-
-| Operations dashboard | Billing investigation |
-|:---:|:---:|
-| ![Operations overview](docs/portfolio/screenshots/01-overview.png) | ![Billing investigation with policy evidence](docs/portfolio/screenshots/02-billing-investigation.png) |
-
-| Pending human approval | Approved simulation and audit trail |
-|:---:|:---:|
-| ![Pending approval](docs/portfolio/screenshots/03-pending-approval.png) | ![Approved simulated workflow](docs/portfolio/screenshots/04-approval-audit.png) |
-
-### Continuous integration
-
-![Successful GitHub Actions workflow](docs/portfolio/screenshots/05-github-ci.png)
-
-The screenshots represent a local demonstration. No real financial action is executed.
-
-## Run it yourself (localhost only)
-
-Prerequisites: Docker Desktop; an existing initialized local pgvector/PostgreSQL container and its Phase 3/4 tenant-RLS roles; the ignored `.env.security` and `.env.rls` generated by the repository's earlier setup; a Gemini API key for real semantic/LLM investigation.
-
-```bash
-# Only after completing the earlier local security + PostgreSQL setup:
-bash scripts/phase6_local.sh up
-bash scripts/phase6_local.sh check
-```
-
-Open **http://127.0.0.1:18082**. Use a local Analyst token from your private `.env.login-tokens` file. The Docker agent is not publicly exposed. The helper reuses your existing database volume; **do not use `docker compose down -v`**.
-
-For a simpler, unguarded deterministic simulation, `python3 -m elyraops.server` starts the standalone dashboard at `http://127.0.0.1:8080` with no Gemini dependency. This mode does *not* demonstrate PostgreSQL tenant isolation. Detailed setup is documented in [DEPLOYMENT_PHASE6.md](DEPLOYMENT_PHASE6.md), [SECURE_RAG_PHASE4.md](SECURE_RAG_PHASE4.md) and [POSTGRES_RLS_PHASE3B.md](POSTGRES_RLS_PHASE3B.md).
-
-## Tests and engineering evidence
-
-```bash
-python -m unittest discover -s tests -v
-python -m compileall -q elyraops agent_service
-```
-
-The CI workflow independently checks Python 3.12 and 3.13, disposable PostgreSQL RLS integration, and both Docker services' HTTP readiness. Live Gemini integration requires a private API key and is intentionally optional.
-
-**Performance claims must be measured, not assumed.** The local k6 portfolio smoke probes only **GET /health** and **GET /api/auth/config** on the Docker dashboard. It is **not a database, agent/LLM, vector-search, or end-to-end workload benchmark**. The [benchmark protocol](docs/portfolio/BENCHMARKS.md) shows how to collect a run and turn its JSON into an evidence-backed Markdown report without changing application data.
-
-## Architecture at a glance
+## System Architecture
 
 ```mermaid
-flowchart LR
-  U[Browser / Analyst & Approver] --> D[Python Dashboard\nlocal HTTP + RBAC]
-  D -->|tenant-scoped cases / decisions| P[(PostgreSQL\ncases + audit events)]
-  D -->|internal service token| A[FastAPI Agent]
-  A --> G[LangGraph\ntriage · retrieve · resolve]
-  G --> R[(PostgreSQL + pgvector\nRAG policies)]
-  G -. optional model calls .-> M[Gemini API]
-  A -->|proposal + audit events| P
+flowchart TD
+    Client[Admin Dashboard / API Client] --> Security[Spring Security: Session or API Key]
+    Security --> API[Spring Boot REST API]
+    API --> DB[(PostgreSQL: Jobs and Events)]
+    Worker[Background Worker / Manual Run] --> Lease[Transactional Job Leasing]
+    Lease --> DB
+    Lease --> Handler[Job Handler Registry]
+    Handler --> Webhook[Outbound HTTPS Webhook Handler]
+    Handler --> Other[Other Registered Job Handlers]
+    Handler --> State[Completion / Retry / Dead Letter]
+    State --> DB
+    API --> Diagnosis[Optional AI Failure Diagnosis]
+    API --> Metrics[Actuator / Micrometer Metrics]
+    Dashboard[React + TypeScript Dashboard] --> Client
 ```
 
-## Security and scope
+**Execution model:** Workers claim eligible jobs using PostgreSQL transactional row-locking (`FOR UPDATE SKIP LOCKED`), execute the selected handler, then persist state changes and job events. Retry scheduling and lease recovery help handle transient errors or interrupted processing.
 
-This is a **portfolio-grade local demonstration, not a production SaaS**. It uses locally generated demo tokens rather than OIDC/MFA, assumes the trusted local host and Docker daemon, passes local secrets as environment values, and uses organization strings rather than canonical tenant IDs. PostgreSQL RLS is defense in depth; it does not protect against a stolen database credential or arbitrary privileged SQL. The system has no real payment/execution integration, cloud hosting, or published performance SLO. See [LIMITATIONS.md](docs/portfolio/LIMITATIONS.md).
+## Features
 
-## Source, decisions, and attribution
+| Area | Implemented capabilities |
+|---|---|
+| Job lifecycle | Submit, inspect, list, schedule, prioritize, retry, cancel, requeue |
+| Concurrency | PostgreSQL row-level locks, worker leasing, lease-expiration recovery |
+| Failure handling | Configurable retry attempts, retry scheduling, dead-letter states, job event history |
+| Webhooks | Outbound HTTPS delivery handler, destination restrictions, timeouts, HTTP error handling |
+| Dashboard | Overview, Jobs, Queues, Workers, Dead Letter, Settings |
+| Security | Admin login, server-side sessions, API-key authorization, CSRF protection, logout |
+| AI integration | Optional failure-diagnosis endpoint with configurable AI provider |
+| Observability | Spring Boot Actuator, Micrometer/Prometheus endpoint, Grafana/Prometheus configuration |
+| Validation | JUnit, Spring Security tests, PostgreSQL Testcontainers integration tests |
+| Deployment | Multi-stage Docker build; React assets served by Spring Boot; Render + Neon PostgreSQL |
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — earlier implementation decisions.
-- [ORIGINS.md](ORIGINS.md) — source attribution policy.
-- [AGENTIC_PHASE1.md](AGENTIC_PHASE1.md), [ENTERPRISE_RAG_PHASE2.md](ENTERPRISE_RAG_PHASE2.md), [SECURITY_PHASE3.md](SECURITY_PHASE3.md), [POSTGRES_RLS_PHASE3B.md](POSTGRES_RLS_PHASE3B.md), [SECURE_RAG_PHASE4.md](SECURE_RAG_PHASE4.md), [OBSERVABILITY_PHASE5.md](OBSERVABILITY_PHASE5.md), [DEPLOYMENT_PHASE6.md](DEPLOYMENT_PHASE6.md) — incremental engineering phases and trade-offs.
+### Job state flow
 
-**Implementation boundaries are intentional:** approval is real within the demonstration workflow; **execution is simulated**. Any outside contributions or reused components must retain proper attribution.
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING
+    PENDING --> RUNNING: Worker leases job
+    RUNNING --> COMPLETED: Handler succeeds
+    RUNNING --> RETRY_SCHEDULED: Retryable failure
+    RETRY_SCHEDULED --> RUNNING: Retry becomes eligible
+    RUNNING --> DEAD_LETTERED: Attempts exhausted
+    PENDING --> CANCELLED: Admin cancels
+    RETRY_SCHEDULED --> CANCELLED: Admin cancels
+    DEAD_LETTERED --> PENDING: Admin requeues
+```
+
+This diagram summarizes the main lifecycle paths; exact transitions are enforced by the application services.
+
+## Technology Stack
+
+| Layer | Technologies |
+|---|---|
+| Backend | Java 21, Spring Boot 3.3, REST APIs, Gradle |
+| Security | Spring Security, BCrypt, session authentication, CSRF tokens, API key |
+| Database | PostgreSQL 16, Spring JDBC, Flyway |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS |
+| Distributed processing | SQL transactions, `FOR UPDATE SKIP LOCKED`, worker leases |
+| AI integration | Optional OpenAI-compatible or Ollama-based diagnosis configuration |
+| Testing | JUnit 5, Spring Boot Test, Spring Security Test, Testcontainers |
+| Deployment & monitoring | Docker, GitHub Actions, Render, Neon, Actuator, Micrometer, Prometheus, Grafana |
+
+## Running Locally
+
+### Prerequisites
+
+- Java 21 and Docker Desktop
+- Git
+- Node.js and npm only if developing the React dashboard separately
+
+### Option A — Run the integrated app in Docker
+
+The checked-in Docker Compose file starts PostgreSQL with its development defaults. The commands below launch the application on **port 8081** with **local-only credentials**; they do not change the production deployment.
+
+```bash
+git clone https://github.com/mallikarjun-git7/FlowRelay.git
+cd FlowRelay
+git checkout feature/webhook-delivery
+
+docker compose up -d postgres
+docker compose build app
+
+docker compose run --no-deps -d \
+  --name flowrelay-local-demo \
+  -p 8081:8080 \
+  -e FLOWRELAY_REQUIRE_API_KEY=true \
+  -e QUEUEFORGE_ADMIN_API_KEY=local-development-key-change-me \
+  -e FLOWRELAY_DASHBOARD_USERNAME=admin \
+  -e FLOWRELAY_DASHBOARD_PASSWORD=local-development-password-change-me \
+  -e QUEUEFORGE_WORKER_ENABLED=false \
+  app
+```
+
+Open `http://localhost:8081/login` and sign in with the **local credentials supplied above**. The dashboard is available at `http://localhost:8081/` and health at `http://localhost:8081/actuator/health`.
+
+To inspect logs or stop the local app:
+
+```bash
+docker logs --tail=100 flowrelay-local-demo
+docker stop flowrelay-local-demo
+docker rm flowrelay-local-demo
+```
+
+> These credentials are for **local development only**. Use unique, strong secrets in any publicly accessible environment. The worker is deliberately disabled in the example; job processing can be triggered through the authorized worker API.
+
+### Option B — Run Spring Boot with a local PostgreSQL container
+
+```bash
+docker compose up -d postgres
+
+SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5433/queueforge \
+SPRING_DATASOURCE_USERNAME=queueforge \
+SPRING_DATASOURCE_PASSWORD=queueforge_dev_password \
+FLOWRELAY_DASHBOARD_USERNAME=admin \
+FLOWRELAY_DASHBOARD_PASSWORD=local-development-password-change-me \
+QUEUEFORGE_ADMIN_API_KEY=local-development-key-change-me \
+./gradlew bootRun
+```
+
+The backend serves on `http://localhost:8080`. The Dockerfile is the recommended way to bundle the production frontend with the backend; `cd dashboard && npm ci && npm run dev` is available for separate frontend development.
+
+## Authentication and API Usage
+
+All `/api/**` endpoints require an authenticated administrator session or a valid admin API key. The login page and health endpoint are public. API-key requests use the header `X-QueueForge-Admin-Key`; browser requests use a Spring Security session, and state-changing browser requests require CSRF protection.
+
+**Unauthenticated health check:**
+
+```bash
+curl http://localhost:8081/actuator/health
+```
+
+**Authenticated list of jobs:**
+
+```bash
+export FLOWRELAY_LOCAL_API_KEY='local-development-key-change-me'
+
+curl -H "X-QueueForge-Admin-Key: $FLOWRELAY_LOCAL_API_KEY" \
+  http://localhost:8081/api/v1/jobs
+```
+
+**Submit a sample job:**
+
+```bash
+curl -X POST http://localhost:8081/api/v1/jobs \
+  -H "X-QueueForge-Admin-Key: $FLOWRELAY_LOCAL_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "queue": "default",
+    "type": "example.log",
+    "payload": {"msg": "Hello from FlowRelay"}
+  }'
+```
+
+**Selected endpoints**
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/actuator/health` | Public health check |
+| `POST` | `/api/v1/jobs` | Submit a job |
+| `GET` | `/api/v1/jobs` | List/filter jobs |
+| `GET` | `/api/v1/jobs/{id}` | Inspect a job |
+| `GET` | `/api/v1/admin/dashboard/summary` | Dashboard totals |
+| `GET` | `/api/v1/admin/queues/stats` | Queue statistics |
+| `GET` | `/api/v1/admin/workers` | Worker visibility |
+| `GET` | `/api/v1/admin/jobs/{id}/events` | Job event timeline |
+| `POST` | `/api/v1/admin/jobs/{id}/requeue` | Requeue a job |
+| `POST` | `/api/v1/admin/jobs/{id}/cancel` | Cancel a job |
+| `POST` | `/api/v1/admin/jobs/{id}/retry-now` | Schedule an immediate retry |
+| `POST` | `/api/v1/admin/ai/jobs/{id}/diagnose` | Optional failure diagnosis |
+
+OpenAPI documentation is configured at `/swagger-ui.html`, but access requires authentication.
+
+## Tests and Quality Checks
+
+**Run unit and PostgreSQL integration tests** (Docker Desktop must be running for Testcontainers):
+
+```bash
+FLOWRELAY_DASHBOARD_USERNAME=admin \
+FLOWRELAY_DASHBOARD_PASSWORD=local-test-password \
+./gradlew clean test integrationTest --no-daemon
+```
+
+The latest reported local run completed successfully with **43 integration tests**, covering job operations, worker leasing, API-key authorization, session authentication, CSRF and logout.
+
+Build the frontend independently:
+
+```bash
+cd dashboard
+npm ci
+npm run build
+```
+
+**CI note:** The repository includes a GitHub Actions workflow; its status should be checked on the [Actions tab](https://github.com/mallikarjun-git7/FlowRelay/actions). Passing local tests does not mean the hosted CI workflow has passed.
+
+## Production Deployment
+
+- **Web application:** [Render](https://flowrelay-ai-backend.onrender.com/)
+- **Database:** Neon PostgreSQL
+- **Packaging:** Docker multi-stage build (Node frontend build + Java backend build + JRE runtime)
+- **Access:** Administrator login; public registration and guest mode are not available
+
+Set the following environment variables in Render. **Never put real values into Git or this README.**
+
+| Variable | Purpose |
+|---|---|
+| `FLOWRELAY_DASHBOARD_USERNAME` | Admin username |
+| `FLOWRELAY_DASHBOARD_PASSWORD` | Strong admin password |
+| `QUEUEFORGE_ADMIN_API_KEY` | Private machine-to-machine API key |
+| `SPRING_DATASOURCE_URL` | Neon PostgreSQL JDBC URL |
+| `SPRING_DATASOURCE_USERNAME` | Database username |
+| `SPRING_DATASOURCE_PASSWORD` | Database password |
+| `JAVA_TOOL_OPTIONS` | Optional JVM memory settings |
+| `FLOWRELAY_REQUIRE_API_KEY` | Legacy compatibility flag; authorization is now enforced by Spring Security |
+
+**Hosting limitation:** Render's free service may spin down during inactivity. An always-on worker or reliable continuous background execution should not be assumed on the free web-service tier. Production data is separate from local Docker test data. Optional AI diagnosis requires a correctly configured and reachable AI provider.
+
+## Engineering Contributions
+
+FlowRelay builds on the MIT-licensed [QueueForge](https://github.com/Thaelith/QueueForge) foundation. Contributions in this repository include:
+
+- Integration of restricted outbound webhook delivery into the existing job handler pipeline.
+- Improved database integration tests and concurrent worker test scenarios.
+- A unified Docker deployment that bundles the React dashboard with Spring Boot.
+- Spring Security-based administrator login, logout, session authorization, API-key access, and CSRF protection.
+- Additional API and browser-session security regression tests.
+- Operational dashboard fixes, including same-origin API requests and backend health reporting.
+- Optional AI-assisted job failure diagnosis integration.
+
+## Roadmap
+
+- [ ] Public, read-only portfolio demo using isolated sample data
+- [ ] Additional webhook delivery tests and persistent per-attempt history
+- [ ] Improved external side-effect idempotency and failure classification
+- [ ] Reproducible throughput/latency benchmarks and load tests
+- [ ] Review and fix remaining GitHub Actions CI failures
+- [ ] Multi-user registration and per-user data isolation (not currently supported)
+
+## License and Attribution
+
+This project extends [QueueForge by Thaelith](https://github.com/Thaelith/QueueForge), released under the **MIT License**. The original job queue, dashboard and core architecture provide the foundation; FlowRelay's additions are outlined above.
+
+See [LICENSE](LICENSE) for the retained copyright notice and license terms.
