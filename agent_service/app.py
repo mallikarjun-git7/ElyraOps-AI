@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from elyraops import core
 from .provider import ModelUnavailable
+from .rag_pg import RagUnavailable
 from .workflow import run_graph
 
 app=FastAPI(title="ElyraOps Agent Service",version="0.2.0")
@@ -44,6 +45,8 @@ def investigate(payload: InvestigationRequest, x_agent_token: str | None = Heade
         result=run_graph(case)
     except ModelUnavailable:
         raise HTTPException(503,"AI provider unavailable; case unchanged")
+    except RagUnavailable:
+        raise HTTPException(503,"RAG retrieval unavailable; case unchanged")
     except ImportError:
         raise HTTPException(503,"LangGraph not installed in the agent service environment")
     run_id=str(uuid.uuid4())

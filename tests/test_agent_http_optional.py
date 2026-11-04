@@ -60,7 +60,7 @@ class ActualLangGraphSmokeTests(unittest.TestCase):
 
     def test_full_graph_in_demo_mode(self):
         from agent_service.workflow import run_graph
-        with patch.dict(os.environ,{"OPENAI_API_KEY":""}):
+        with patch.dict(os.environ,{"OPENAI_API_KEY":"", "GEMINI_API_KEY":"", "ELYRA_RAG_DATABASE_URL":""}):
             result=run_graph(core.get_case("EC-1042"))
         self.assertEqual(result["mode"],"langgraph-demo")
         self.assertEqual(result["evidence"][0]["id"],"POL-001")
