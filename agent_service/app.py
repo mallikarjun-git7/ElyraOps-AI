@@ -7,14 +7,19 @@ import os
 import uuid
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from elyraops import core, security
+from elyraops import core, security, pg_cases
 from .provider import ModelUnavailable
 from .rag_pg import RagUnavailable
 from .workflow import run_graph
 
 app=FastAPI(title="ElyraOps Agent Service",version="0.2.0")
+
+@app.exception_handler(pg_cases.CaseStoreUnavailable)
+async def pg_cases_unavailable(_request, _exc):
+    return JSONResponse({"detail":"PostgreSQL case store unavailable"}, status_code=503)
 
 
 class InvestigationRequest(BaseModel):
@@ -56,6 +61,13 @@ def investigate(payload: InvestigationRequest, x_agent_token: str | None = Heade
         raise HTTPException(503,"RAG retrieval unavailable; case unchanged")
     except ImportError:
         raise HTTPException(503,"LangGraph not installed in the agent service environment")
+    if pg_cases.enabled():
+        try:
+            return pg_cases.commit_graph_result(payload.case_id, payload.organization, result)
+        except KeyError:
+            raise HTTPException(404,"Case not found")
+        except pg_cases.CaseStoreUnavailable:
+            raise HTTPException(503,"PostgreSQL case store unavailable")
     run_id=str(uuid.uuid4())
     # Never keep a DB write lock open while waiting for model calls.
     with core.transaction() as db:

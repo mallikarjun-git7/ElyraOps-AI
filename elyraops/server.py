@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlparse
 from . import core
 from . import agent_client
 from . import security
+from . import pg_cases
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -41,6 +42,12 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(size))
 
     def do_GET(self):
+        try:
+            return self._do_GET()
+        except pg_cases.CaseStoreUnavailable:
+            return self.write_json({"error": "PostgreSQL case store unavailable"}, 503)
+
+    def _do_GET(self):
         path = unquote(urlparse(self.path).path)
         if path == "/health":
             return self.write_json({"status": "ok", "service": "elyraops-demo", "mode": "agent-service" if os.environ.get("ELYRA_AGENT_URL") else "simulation"})
@@ -112,6 +119,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.write_json({"error": "Not found"}, 404)
         except security.SecurityError as exc:
             return self.write_json({"error": str(exc)}, exc.status)
+        except pg_cases.CaseStoreUnavailable:
+            return self.write_json({"error": "PostgreSQL case store unavailable"}, 503)
         except agent_client.AgentUnavailable as exc:
             return self.write_json({"error": str(exc)}, 502)
         except KeyError:

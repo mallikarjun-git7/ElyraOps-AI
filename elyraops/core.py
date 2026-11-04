@@ -16,6 +16,7 @@ import uuid
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
+from . import pg_cases
 
 DB_PATH = os.environ.get("ELYRA_DB_PATH", str(Path(__file__).resolve().parent.parent / "data" / "elyraops.db"))
 
@@ -71,6 +72,8 @@ def event(db, case_id, event_type, message, actor="system", details=None):
 
 
 def initialize():
+    if pg_cases.enabled():
+        pg_cases.verify_backend()
     with transaction() as db:
         db.executescript("""
         CREATE TABLE IF NOT EXISTS cases (
@@ -132,6 +135,8 @@ ACTIONS = {
 
 
 def list_cases(organization=None):
+    if pg_cases.enabled():
+        return pg_cases.list_cases(organization)
     with connect() as db:
         query = "SELECT id,title,domain,priority,organization,description,status,created_at,updated_at FROM cases"
         if organization is None:
@@ -140,6 +145,8 @@ def list_cases(organization=None):
 
 
 def get_case(case_id, organization=None):
+    if pg_cases.enabled():
+        return pg_cases.get_case(case_id, organization)
     with connect() as db:
         if organization is None:
             r = db.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
@@ -156,6 +163,8 @@ def get_case(case_id, organization=None):
 
 
 def investigate(case_id, organization=None):
+    if pg_cases.enabled():
+        return pg_cases.investigate(case_id, organization)
     with transaction() as db:
         if organization is None:
             row = db.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
@@ -188,6 +197,8 @@ def decide(case_id, decision, actor, organization=None):
         raise ValueError("Decision must be 'approve' or 'reject'")
     if not actor or not isinstance(actor, str) or len(actor) > 80:
         raise ValueError("A short approver name is required")
+    if pg_cases.enabled():
+        return pg_cases.decide(case_id, decision, actor, organization)
     with transaction() as db:
         if organization is None:
             r = db.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
@@ -234,6 +245,8 @@ def create_case(payload, organization=None):
         raise ValueError("Title must be 4–140 characters and description 10–3000 characters")
     if domain not in ACTIONS or priority not in {"Low", "Medium", "High", "Critical"} or not (1 <= len(organization) <= 100):
         raise ValueError("Invalid domain, priority or organization")
+    if pg_cases.enabled():
+        return pg_cases.create_case({"title":title,"description":description,"domain":domain,"priority":priority},organization)
     case_id = "EC-" + str(uuid.uuid4().int % 900000 + 100000)
     with transaction() as db:
         db.execute("INSERT INTO cases(id,title,domain,priority,organization,description,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
