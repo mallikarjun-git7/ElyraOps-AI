@@ -102,4 +102,22 @@ class DeploymentContractTests(unittest.TestCase):
             run('http://elyra-dashboard:8082','http://elyra-agent:8091',guard=True,attempts=1,delay=0)
 
 
+    def test_smoke_retries_connection_reset(self):
+        responses = [
+            ConnectionResetError("Container starting"),
+            {"status": "ok"},
+            {"status": "ok"},
+            {"status": "ready"},
+        ]
+        with patch("scripts.phase6_smoke.get_json", side_effect=responses):
+            with patch("scripts.phase6_smoke.time.sleep") as sleep:
+                run(
+                    "http://127.0.0.1:18082",
+                    "http://127.0.0.1:18091",
+                    attempts=2,
+                    delay=0,
+                )
+                sleep.assert_called_once()
+
+
 if __name__ == '__main__': unittest.main()

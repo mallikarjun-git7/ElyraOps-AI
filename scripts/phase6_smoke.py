@@ -51,7 +51,7 @@ def run(dashboard_url: str, agent_url: str, guard: bool = False, attempts: int =
             print("Phase 6 smoke check passed: dashboard health, agent health/readiness, request IDs"
                   + (", guarded case access" if guard else ""))
             return
-        except (HTTPError, URLError, TimeoutError, ValueError, RuntimeError) as exc:
+        except (HTTPError, URLError, OSError, ValueError, RuntimeError) as exc:
             errors.append(type(exc).__name__)
             time.sleep(delay)
     raise RuntimeError("Local smoke check failed after retry window (" + errors[-1] + ")")
