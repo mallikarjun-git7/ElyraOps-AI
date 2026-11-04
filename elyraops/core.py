@@ -106,7 +106,9 @@ def tokens(text):
 
 def retrieve(db, query, domain, limit=3):
     """Local, transparent TF-IDF-like keyword retrieval; NOT an embedding model."""
-    docs = [dict(x) for x in db.execute("SELECT * FROM knowledge")]
+    # Only policies for the case domain may be cited; keyword overlap does not
+    # confer document access or business relevance.
+    docs = [dict(x) for x in db.execute("SELECT * FROM knowledge WHERE domain=?", (domain,))]
     q = Counter(tokens(query))
     doc_tokens = [Counter(tokens(d["title"] + " " + d["content"])) for d in docs]
     n = max(len(docs), 1)

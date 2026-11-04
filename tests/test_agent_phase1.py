@@ -23,12 +23,13 @@ class AgentPhaseOneTests(unittest.TestCase):
     def test_policy_retrieval_is_grounded(self):
         case=core.get_case("EC-1042")
         first=triage_node({"case":case})
-        hits=retrieve_node({"case":case,**first})["evidence"]
+        with patch.dict(os.environ, {"ELYRA_RAG_DATABASE_URL": ""}):
+            hits=retrieve_node({"case":case,**first})["evidence"]
         self.assertEqual(hits[0]["id"],"POL-001")
 
     def test_no_key_uses_bounded_demo_planner(self):
         case=core.get_case("EC-1042")
-        with patch.dict(os.environ,{"OPENAI_API_KEY":""}):
+        with patch.dict(os.environ,{"OPENAI_API_KEY":"", "GEMINI_API_KEY":""}):
             result=plan_node({"case":case,"domain":"Billing","evidence":[{"id":"POL-001"}]})
         self.assertEqual(result["mode"],"langgraph-demo")
         self.assertEqual(result["action"],core.ACTIONS["Billing"][0])

@@ -9,6 +9,7 @@ from typing import TypedDict
 
 from elyraops import core
 from .provider import draft_rationale
+from .rag_pg import retrieve_for_case
 
 
 class CaseState(TypedDict, total=False):
@@ -29,8 +30,7 @@ def triage_node(state: CaseState) -> dict:
 
 def retrieve_node(state: CaseState) -> dict:
     case=state["case"]
-    with core.connect() as db:
-        evidence=core.retrieve(db, case["title"]+" "+case["description"], state["domain"])
+    evidence=retrieve_for_case(case)
     return {"evidence":evidence}
 
 
