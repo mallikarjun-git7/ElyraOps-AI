@@ -5,6 +5,7 @@ import json
 import mimetypes
 import os
 import re
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -13,6 +14,7 @@ from . import core
 from . import agent_client
 from . import security
 from . import pg_cases
+from . import observability as obs
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -21,7 +23,31 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "ElyraOpsDemo/0.1"
 
     def log_message(self, fmt, *args):
-        super().log_message(fmt, *args)
+        # The default BaseHTTPRequestHandler logs raw request paths, including query strings.
+        # JSON request summaries from obs.finish_http_request are privacy-bounded.
+        pass
+
+    def send_response(self, code, message=None):
+        self._response_status = code
+        return super().send_response(code, message)
+
+    def end_headers(self):
+        if getattr(self, "_request_id", None):
+            self.send_header("X-Request-ID", self._request_id)
+        return super().end_headers()
+
+    def _observed(self, method, handler):
+        rid = obs.normalize_request_id(self.headers.get("X-Request-ID"))
+        self._request_id = rid
+        self._response_status = 500
+        started = time.perf_counter()
+        with obs.request_context(rid):
+            try:
+                return handler()
+            finally:
+                path = urlparse(self.path).path
+                obs.finish_http_request("dashboard", method, path, self._response_status, started, rid)
+
 
     def write_json(self, data, status=200):
         output = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -42,6 +68,9 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(size))
 
     def do_GET(self):
+        return self._observed("GET", self._safe_GET)
+
+    def _safe_GET(self):
         try:
             return self._do_GET()
         except pg_cases.CaseStoreUnavailable:
@@ -51,6 +80,20 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(urlparse(self.path).path)
         if path == "/health":
             return self.write_json({"status": "ok", "service": "elyraops-demo", "mode": "agent-service" if os.environ.get("ELYRA_AGENT_URL") else "simulation"})
+        if path == "/metrics":
+            try:
+                allowed = security.internal_token_valid(self.headers.get("X-Agent-Token"))
+            except security.SecurityError as exc:
+                return self.write_json({"error":"Metrics access unavailable"}, exc.status)
+            if not allowed:
+                return self.write_json({"error":"Internal service token required"}, 401)
+            output = obs.metrics_text("dashboard").encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(output)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return self.wfile.write(output)
         if path == "/api/auth/config":
             try:
                 return self.write_json({"enabled": security.enabled()})
@@ -96,6 +139,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self):
+        return self._observed("POST", self._do_POST)
+
+    def _do_POST(self):
         path = unquote(urlparse(self.path).path)
         try:
             principal = security.authenticate(self.headers.get("Authorization"))

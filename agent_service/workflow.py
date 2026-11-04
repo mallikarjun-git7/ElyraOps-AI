@@ -5,9 +5,10 @@ production multi-agent autonomy, does not use persistent graph checkpoints, and
 never executes real business actions.
 """
 import os
+import time
 from typing import TypedDict
 
-from elyraops import core
+from elyraops import core, observability as obs
 from .provider import draft_rationale
 from .rag_pg import retrieve_for_case
 
@@ -48,12 +49,28 @@ def plan_node(state: CaseState) -> dict:
     return {"action":action,"reasoning":rationale,"mode":mode}
 
 
+def _observed_stage(name: str, fn):
+    def wrapped(state: CaseState) -> dict:
+        started = time.perf_counter()
+        status = 200
+        try:
+            return fn(state)
+        except Exception:
+            status = 500
+            raise
+        finally:
+            # This has no case ID, text, document content, token or tenant label.
+            obs.log_event("agent", "workflow_stage", route=name, status=status,
+                          seconds=time.perf_counter()-started)
+    return wrapped
+
+
 def run_graph(case:dict) -> CaseState:
     from langgraph.graph import END, START, StateGraph
     builder=StateGraph(CaseState)
-    builder.add_node("triage",triage_node)
-    builder.add_node("policy_retrieval",retrieve_node)
-    builder.add_node("resolution_planning",plan_node)
+    builder.add_node("triage",_observed_stage("triage", triage_node))
+    builder.add_node("policy_retrieval",_observed_stage("policy_retrieval", retrieve_node))
+    builder.add_node("resolution_planning",_observed_stage("resolution_planning", plan_node))
     builder.add_edge(START,"triage")
     builder.add_edge("triage","policy_retrieval")
     builder.add_edge("policy_retrieval","resolution_planning")
