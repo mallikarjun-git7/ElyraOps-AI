@@ -1,8 +1,8 @@
 """Persistent case management, evidence retrieval, and approval-gated workflow.
 
 Demo-only data. This implementation deliberately does not execute real financial
-or administrative operations. Authentication and tenant authorization are not
-implemented and must be added before exposing real business data.
+or administrative operations. fully implemented. An opt-in HTTP access guard provides demo-only
+role and organization scoping; do not expose real business data.
 """
 from __future__ import annotations
 
@@ -131,14 +131,20 @@ ACTIONS = {
 }
 
 
-def list_cases():
+def list_cases(organization=None):
     with connect() as db:
-        return [dict(r) for r in db.execute("SELECT id,title,domain,priority,organization,description,status,created_at,updated_at FROM cases ORDER BY id")]
+        query = "SELECT id,title,domain,priority,organization,description,status,created_at,updated_at FROM cases"
+        if organization is None:
+            return [dict(r) for r in db.execute(query + " ORDER BY id")]
+        return [dict(r) for r in db.execute(query + " WHERE organization=? ORDER BY id", (organization,))]
 
 
-def get_case(case_id):
+def get_case(case_id, organization=None):
     with connect() as db:
-        r = db.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
+        if organization is None:
+            r = db.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
+        else:
+            r = db.execute("SELECT * FROM cases WHERE id=? AND organization=?", (case_id, organization)).fetchone()
         if not r:
             return None
         data = dict(r)
@@ -149,9 +155,12 @@ def get_case(case_id):
         return data
 
 
-def investigate(case_id):
+def investigate(case_id, organization=None):
     with transaction() as db:
-        row = db.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
+        if organization is None:
+            row = db.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
+        else:
+            row = db.execute("SELECT * FROM cases WHERE id=? AND organization=?", (case_id, organization)).fetchone()
         if not row:
             raise KeyError(case_id)
         if row["status"] != "Open":
@@ -174,13 +183,16 @@ def investigate(case_id):
         return {"case_id": case_id, "status": "Pending approval", "workflow_run_id": workflow_run_id, "already_processed": False}
 
 
-def decide(case_id, decision, actor):
+def decide(case_id, decision, actor, organization=None):
     if decision not in {"approve", "reject"}:
         raise ValueError("Decision must be 'approve' or 'reject'")
     if not actor or not isinstance(actor, str) or len(actor) > 80:
         raise ValueError("A short approver name is required")
     with transaction() as db:
-        r = db.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
+        if organization is None:
+            r = db.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
+        else:
+            r = db.execute("SELECT * FROM cases WHERE id=? AND organization=?", (case_id, organization)).fetchone()
         if not r:
             raise KeyError(case_id)
         if r["status"] != "Pending approval":
@@ -200,8 +212,8 @@ def knowledge():
         return [dict(r) for r in db.execute("SELECT id,title,domain,content FROM knowledge ORDER BY id")]
 
 
-def dashboard():
-    cases = list_cases()
+def dashboard(organization=None):
+    cases = list_cases(organization)
     return {
         "cases_total": len(cases),
         "pending_approvals": sum(c["status"] == "Pending approval" for c in cases),
@@ -212,12 +224,12 @@ def dashboard():
     }
 
 
-def create_case(payload):
+def create_case(payload, organization=None):
     title = str(payload.get("title", "")).strip()
     description = str(payload.get("description", "")).strip()
     domain = str(payload.get("domain", "Support"))
     priority = str(payload.get("priority", "Medium"))
-    organization = str(payload.get("organization", "Demo organization")).strip()
+    organization = str(organization if organization is not None else payload.get("organization", "Demo organization")).strip()
     if not (4 <= len(title) <= 140 and 10 <= len(description) <= 3000):
         raise ValueError("Title must be 4–140 characters and description 10–3000 characters")
     if domain not in ACTIONS or priority not in {"Low", "Medium", "High", "Critical"} or not (1 <= len(organization) <= 100):

@@ -9,7 +9,7 @@ import uuid
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from elyraops import core
+from elyraops import core, security
 from .provider import ModelUnavailable
 from .rag_pg import RagUnavailable
 from .workflow import run_graph
@@ -19,6 +19,7 @@ app=FastAPI(title="ElyraOps Agent Service",version="0.2.0")
 
 class InvestigationRequest(BaseModel):
     case_id: str = Field(pattern=r"^EC-[A-Za-z0-9-]+$", max_length=70)
+    organization: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 @app.get("/health")
@@ -32,11 +33,17 @@ def health():
 
 @app.post("/v1/investigate")
 def investigate(payload: InvestigationRequest, x_agent_token: str | None = Header(default=None)):
-    token=os.environ.get("ELYRA_AGENT_TOKEN", "")
-    if token and x_agent_token != token:
-        raise HTTPException(401,"Invalid internal service token")
+    try:
+        valid = security.internal_token_valid(x_agent_token)
+    except security.SecurityError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    if not valid:
+        raise HTTPException(401, "Invalid internal service token")
+    scoped=security.enabled()
+    if scoped and not payload.organization:
+        raise HTTPException(400, "Trusted organization required")
     core.initialize()
-    case=core.get_case(payload.case_id)
+    case=core.get_case(payload.case_id, payload.organization if scoped else None)
     if case is None:
         raise HTTPException(404,"Case not found")
     if case["status"] != "Open":
@@ -52,7 +59,10 @@ def investigate(payload: InvestigationRequest, x_agent_token: str | None = Heade
     run_id=str(uuid.uuid4())
     # Never keep a DB write lock open while waiting for model calls.
     with core.transaction() as db:
-        fresh=db.execute("SELECT status,workflow_run_id FROM cases WHERE id=?",(payload.case_id,)).fetchone()
+        if scoped:
+            fresh=db.execute("SELECT status,workflow_run_id FROM cases WHERE id=? AND organization=?",(payload.case_id,payload.organization)).fetchone()
+        else:
+            fresh=db.execute("SELECT status,workflow_run_id FROM cases WHERE id=?",(payload.case_id,)).fetchone()
         if fresh is None:
             raise HTTPException(404,"Case not found")
         if fresh["status"] != "Open":

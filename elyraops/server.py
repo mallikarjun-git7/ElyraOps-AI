@@ -11,6 +11,7 @@ from urllib.parse import unquote, urlparse
 
 from . import core
 from . import agent_client
+from . import security
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -43,15 +44,32 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(urlparse(self.path).path)
         if path == "/health":
             return self.write_json({"status": "ok", "service": "elyraops-demo", "mode": "agent-service" if os.environ.get("ELYRA_AGENT_URL") else "simulation"})
+        if path == "/api/auth/config":
+            try:
+                return self.write_json({"enabled": security.enabled()})
+            except security.SecurityError as exc:
+                return self.write_json({"error": str(exc)}, exc.status)
+        if path.startswith("/api/"):
+            try:
+                principal = security.authenticate(self.headers.get("Authorization"))
+                security.authorize(principal, "read")
+            except security.SecurityError as exc:
+                return self.write_json({"error": str(exc)}, exc.status)
+            organization = principal.organization if principal else None
+        else:
+            principal = None
+            organization = None
+        if path == "/api/auth/me":
+            return self.write_json({"enabled": bool(principal), "name": principal.name if principal else "Demo operator", "role": principal.role if principal else "demo", "organization": organization})
         if path == "/api/dashboard":
-            return self.write_json(core.dashboard())
+            return self.write_json(core.dashboard(organization))
         if path == "/api/cases":
-            return self.write_json({"items": core.list_cases()})
+            return self.write_json({"items": core.list_cases(organization)})
         if path == "/api/knowledge":
             return self.write_json({"items": core.knowledge()})
         match = re.fullmatch(r"/api/cases/(EC-[A-Za-z0-9-]+)", path)
         if match:
-            case = core.get_case(match.group(1))
+            case = core.get_case(match.group(1), organization)
             return self.write_json(case) if case else self.write_json({"error": "Case not found"}, 404)
         if path == "/":
             path = "/index.html"
@@ -73,18 +91,27 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(urlparse(self.path).path)
         try:
+            principal = security.authenticate(self.headers.get("Authorization"))
             payload = self.read_json()
             if not isinstance(payload, dict):
                 raise ValueError("JSON object required")
             if path == "/api/cases":
-                return self.write_json(core.create_case(payload), 201)
+                security.authorize(principal, "create")
+                return self.write_json(core.create_case(payload, principal.organization if principal else None), 201)
             match = re.fullmatch(r"/api/cases/(EC-[A-Za-z0-9-]+)/(investigate|decision)", path)
             if match:
                 case_id, operation = match.groups()
+                organization = principal.organization if principal else None
                 if operation == "investigate":
-                    return self.write_json(agent_client.investigate(case_id) if os.environ.get("ELYRA_AGENT_URL") else core.investigate(case_id))
-                return self.write_json(core.decide(case_id, payload.get("decision"), payload.get("actor")))
+                    security.authorize(principal, "investigate")
+                    if not core.get_case(case_id, organization):
+                        return self.write_json({"error": "Case not found"}, 404)
+                    return self.write_json(agent_client.investigate(case_id, organization) if os.environ.get("ELYRA_AGENT_URL") else core.investigate(case_id, organization))
+                security.authorize(principal, "decide")
+                return self.write_json(core.decide(case_id, payload.get("decision"), principal.name if principal else payload.get("actor"), organization))
             return self.write_json({"error": "Not found"}, 404)
+        except security.SecurityError as exc:
+            return self.write_json({"error": str(exc)}, exc.status)
         except agent_client.AgentUnavailable as exc:
             return self.write_json({"error": str(exc)}, 502)
         except KeyError:
@@ -99,7 +126,10 @@ def run():
     port = int(os.environ.get("PORT", "8080"))
     httpd = ThreadingHTTPServer((host, port), Handler)
     mode = "AGENT SERVICE" if os.environ.get("ELYRA_AGENT_URL") else "SIMULATION MODE"
-    print(f"ElyraOps AI demo at http://{host}:{port} | {mode} | No authentication", flush=True)
+    security_mode = "GUARDED LOCAL API" if security.enabled() else "UNGUARDED DEMO"
+    if security.enabled() and host not in {"127.0.0.1", "localhost"}:
+        raise RuntimeError("Guarded demo must bind to localhost; public exposure is unsupported")
+    print(f"ElyraOps AI demo at http://{host}:{port} | {mode} | {security_mode}", flush=True)
     httpd.serve_forever()
 
 if __name__ == "__main__":
