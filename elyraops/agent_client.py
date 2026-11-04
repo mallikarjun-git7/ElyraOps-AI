@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from . import security
+from . import observability as obs
 
 
 class AgentUnavailable(RuntimeError):
@@ -18,6 +19,15 @@ def investigate(case_id:str, organization:str | None = None) -> dict:
     if parsed.scheme!="http" or parsed.hostname not in {"127.0.0.1","localhost"} or parsed.username or parsed.password or parsed.path not in {"","/"}:
         raise AgentUnavailable("Agent URL must be a trusted local http://127.0.0.1:<port> endpoint")
     headers={"Content-Type":"application/json"}
+    rid = obs.current_request_id()
+    if rid:
+        headers["X-Request-ID"] = rid
+    try:
+        timeout = int(os.environ.get("ELYRA_AGENT_TIMEOUT_SECONDS", "60"))
+    except ValueError as exc:
+        raise AgentUnavailable("Agent timeout must be an integer between 5 and 120") from exc
+    if not 5 <= timeout <= 120:
+        raise AgentUnavailable("Agent timeout must be between 5 and 120 seconds")
     internal=os.environ.get("ELYRA_AGENT_TOKEN", "")
     if security.enabled() and len(internal) < 32:
         raise AgentUnavailable("An internal agent token of at least 32 characters is required")
@@ -30,7 +40,7 @@ def investigate(case_id:str, organization:str | None = None) -> dict:
         body["organization"]=organization
     request=Request(base+"/v1/investigate",json.dumps(body).encode(),headers,method="POST")
     try:
-        with urlopen(request,timeout=60) as response:
+        with urlopen(request,timeout=timeout) as response:
             result=json.load(response)
         if not isinstance(result,dict) or result.get("case_id")!=case_id or "status" not in result:
             raise AgentUnavailable("Agent service returned an invalid response")

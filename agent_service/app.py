@@ -4,18 +4,61 @@ Set host to 127.0.0.1. This service is NOT safe for public internet exposure.
 """
 import json
 import os
+import time
 import uuid
 
-from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
-from elyraops import core, security, pg_cases
+from elyraops import core, security, pg_cases, observability as obs
 from .provider import ModelUnavailable
 from .rag_pg import RagUnavailable
 from .workflow import run_graph
 
 app=FastAPI(title="ElyraOps Agent Service",version="0.2.0")
+
+
+@app.middleware("http")
+async def observe_requests(request: Request, call_next):
+    rid = obs.normalize_request_id(request.headers.get("X-Request-ID"))
+    started = time.perf_counter()
+    status = 500
+    with obs.request_context(rid):
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            response.headers["X-Request-ID"] = rid
+            return response
+        finally:
+            obs.finish_http_request("agent", request.method, request.url.path, status, started, rid)
+
+
+@app.get("/metrics")
+def metrics(x_agent_token: str | None = Header(default=None)):
+    # Private instrumentation; do not expose metrics to browser users.
+    try:
+        permitted = security.internal_token_valid(x_agent_token)
+    except security.SecurityError as exc:
+        raise HTTPException(exc.status, "Metrics access unavailable") from exc
+    if not permitted:
+        raise HTTPException(401, "Internal service token required")
+    return PlainTextResponse(obs.metrics_text("agent"), media_type="text/plain; version=0.0.4")
+
+
+@app.get("/ready")
+def ready():
+    # No Gemini calls. RLS checks require the non-owner runtime role in guarded mode.
+    try:
+        from . import rag_pg
+        if pg_cases.enabled():
+            pg_cases.verify_backend()
+        if rag_pg.secure_rag_enabled():
+            with rag_pg.secure_rag_connection("startup-probe") as conn:
+                conn.execute("SELECT 1")
+    except (pg_cases.CaseStoreUnavailable, RagUnavailable, security.SecurityError):
+        raise HTTPException(503, "Required local dependencies are unavailable")
+    return {"status":"ready"}
 
 @app.exception_handler(pg_cases.CaseStoreUnavailable)
 async def pg_cases_unavailable(_request, _exc):
