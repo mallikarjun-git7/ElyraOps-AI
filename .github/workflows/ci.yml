@@ -34,3 +34,45 @@ jobs:
 
       - name: Validate Python syntax
         run: python -m compileall -q elyraops agent_service
+
+  secure-rag-postgres:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg16-trixie
+        env:
+          POSTGRES_DB: elyra_rag
+          POSTGRES_USER: elyra_demo
+          POSTGRES_PASSWORD: ci-synthetic-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U elyra_demo -d elyra_rag"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      ELYRA_RLS_ADMIN_DATABASE_URL: postgresql://elyra_demo:ci-synthetic-password@127.0.0.1:5432/elyra_rag
+      ELYRA_RAG_DATABASE_URL: postgresql://elyra_demo:ci-synthetic-password@127.0.0.1:5432/elyra_rag
+      ELYRA_SECURITY_MODE: required
+      ELYRA_SECURE_RAG_LIVE_TEST: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-rag.txt
+      - name: Initialize fresh database and RLS
+        run: |
+          python -m agent_service.rag_pg init
+          python scripts/setup_rls.py
+          python scripts/setup_secure_rag.py --apply
+      - name: Run live cross-tenant RAG security tests (no AI API key)
+        run: |
+          set -a
+          source .env.rls
+          set +a
+          python -m unittest discover -s tests -p test_secure_rag_phase4.py -v

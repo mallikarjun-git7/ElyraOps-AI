@@ -1,7 +1,7 @@
 """Optional local-only hybrid retrieval: pgvector + PostgreSQL full-text ranking.
 
-No HTTP ingestion endpoint or authorization is provided. Tenant labels are demo
-scopes, NOT verified identities. Do not expose this to untrusted users.
+Local CLI ingestion is owner-only; guarded RAG retrieval can opt into a non-owner
+PostgreSQL connection with row-level security. This remains a localhost demo.
 """
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import argparse
 import json
 import math
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -83,6 +84,68 @@ def _db_url() -> str:
     if not url:
         raise RagUnavailable("Set ELYRA_RAG_DATABASE_URL for PostgreSQL retrieval")
     return url
+
+
+def secure_rag_enabled() -> bool:
+    """Explicit opt-in. Unknown values are errors, never silent insecure fallback."""
+    mode = os.environ.get("ELYRA_RAG_RLS_MODE", "").strip()
+    if mode not in {"", "required"}:
+        raise RagUnavailable("ELYRA_RAG_RLS_MODE must be unset or 'required'")
+    return mode == "required"
+
+
+def _runtime_url(organization: str) -> str:
+    """Use only the existing non-owner case role for guarded RAG reads."""
+    from elyraops import security
+    try:
+        guarded = security.enabled()
+    except security.SecurityError as exc:
+        raise RagUnavailable("Guarded authentication must be configured") from exc
+    if not guarded:
+        raise RagUnavailable("Secure RAG requires ELYRA_SECURITY_MODE=required")
+    if (not isinstance(organization, str) or not 1 <= len(organization) <= 100
+            or organization == "shared"):
+        raise RagUnavailable("An authenticated, non-shared organization is required")
+    url = os.environ.get("ELYRA_CASES_DATABASE_URL", "").strip()
+    if not url:
+        raise RagUnavailable("Secure RAG requires the non-owner ELYRA_CASES_DATABASE_URL")
+    return url
+
+
+@contextmanager
+def secure_rag_connection(organization: str):
+    """RLS-scoped transaction; no owner URL or cross-request tenant leakage."""
+    if not secure_rag_enabled():
+        raise RagUnavailable("Secure RAG mode not activated")
+    url = _runtime_url(organization)
+    psycopg, dict_row, register_vector = _pg_deps()
+    try:
+        with psycopg.connect(url, row_factory=dict_row, connect_timeout=5) as conn:
+            register_vector(conn)
+            actor = conn.execute("SELECT current_user AS name").fetchone()["name"]
+            if actor != "elyra_cases_runtime":
+                raise RagUnavailable("RAG runtime must use the dedicated non-owner role")
+            role = conn.execute("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname=current_user").fetchone()
+            if not role or role["rolsuper"] or role["rolbypassrls"]:
+                raise RagUnavailable("Unsafe PostgreSQL RAG runtime privileges")
+            state = conn.execute("""
+                SELECT c.relrowsecurity, c.relforcerowsecurity, c.relowner =
+                       (SELECT oid FROM pg_roles WHERE rolname=current_user) AS is_owner
+                  FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+                 WHERE n.nspname='public' AND c.relname='rag_chunks'
+            """).fetchone()
+            if not state or not state["relrowsecurity"] or not state["relforcerowsecurity"] or state["is_owner"]:
+                raise RagUnavailable("RAG table RLS not enabled and forced for the non-owner role")
+            policy = conn.execute("""
+                SELECT 1 FROM pg_policies WHERE schemaname='public'
+                 AND tablename='rag_chunks' AND policyname='rag_tenant_read'
+            """).fetchone()
+            if not policy:
+                raise RagUnavailable("Secure RAG retrieval policy is missing")
+            conn.execute("SELECT set_config(%s, %s, true)", ("elyra.tenant_id", organization))
+            yield conn
+    except psycopg.Error as exc:
+        raise RagUnavailable("Secure RAG PostgreSQL query failed") from exc
 
 
 def init_db() -> None:
@@ -195,13 +258,17 @@ def fuse_ranked(vector_hits: list[dict], lexical_hits: list[dict], limit: int = 
 def search(query: str, domain: str, organization: str, limit: int = 3) -> list[dict]:
     """Searches only domain-scoped, shared or organization-labelled documents.
 
-    The organization field comes from a demo case and is NOT verified identity.
-    Production must derive tenant context from the authenticated principal.
+    In secure RAG mode, the organization must come from the authenticated
+    case loaded by the trusted internal agent service, not raw user input.
     """
     if domain not in core.ACTIONS or not (1 <= len(organization) <= 100):
         raise ValueError("Invalid retrieval scope")
     if not (1 <= len(query) <= 4000) or not (1 <= limit <= 10):
         raise ValueError("Invalid retrieval request")
+    protected = secure_rag_enabled()
+    if protected:
+        # Validate guard and RLS runtime before consuming Gemini embedding quota.
+        _runtime_url(organization)
     query_vec = embedding(query, "RETRIEVAL_QUERY")
     psycopg, dict_row, register_vector = _pg_deps()
     # Bind a native pgvector value, not a PostgreSQL float8[] array.
@@ -215,10 +282,19 @@ def search(query: str, domain: str, organization: str, limit: int = 3) -> list[d
                 "ORDER BY ts_rank_cd(to_tsvector('english', title || ' ' || content), "
                 "websearch_to_tsquery('english', %s)) DESC LIMIT 20")
     try:
-        with psycopg.connect(_db_url(), row_factory=dict_row, connect_timeout=5) as conn:
-            register_vector(conn)
-            vector_hits = conn.execute(vector_sql, (organization, domain, EMBEDDING_MODEL, Vector(query_vec))).fetchall()
-            lexical_hits = conn.execute(text_sql, (organization, domain, EMBEDDING_MODEL, query, query)).fetchall()
+        if protected:
+            # Database policy is the authorization boundary; predicates remain
+            # as defence-in-depth and for efficient query planning.
+            with secure_rag_connection(organization) as conn:
+                vector_hits = conn.execute(vector_sql, (organization, domain, EMBEDDING_MODEL, Vector(query_vec))).fetchall()
+                lexical_hits = conn.execute(text_sql, (organization, domain, EMBEDDING_MODEL, query, query)).fetchall()
+        else:
+            # Legacy local demo only. The configured URL may be the table owner;
+            # NEVER use this path for protected production documents.
+            with psycopg.connect(_db_url(), row_factory=dict_row, connect_timeout=5) as conn:
+                register_vector(conn)
+                vector_hits = conn.execute(vector_sql, (organization, domain, EMBEDDING_MODEL, Vector(query_vec))).fetchall()
+                lexical_hits = conn.execute(text_sql, (organization, domain, EMBEDDING_MODEL, query, query)).fetchall()
     except psycopg.Error as exc:
         raise RagUnavailable("PostgreSQL hybrid retrieval failed") from exc
     return fuse_ranked(vector_hits, lexical_hits, limit)
@@ -226,7 +302,7 @@ def search(query: str, domain: str, organization: str, limit: int = 3) -> list[d
 
 def retrieve_for_case(case: dict) -> list[dict]:
     query = (case["title"] + " " + case["description"])[:4000]
-    if os.environ.get("ELYRA_RAG_DATABASE_URL", "").strip():
+    if secure_rag_enabled() or os.environ.get("ELYRA_RAG_DATABASE_URL", "").strip():
         return search(query, case["domain"], case["organization"])
     # Offline fallback is domain-filtered but NOT semantic/vector search.
     with core.connect() as db:
