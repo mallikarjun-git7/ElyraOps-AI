@@ -3,6 +3,11 @@ __pycache__/
 .venv/
 data/
 .env
+.env.*
 .DS_Store
 .pytest_cache/
 coverage/
+
+# Local security credentials
+.env.security
+.env.login-tokens

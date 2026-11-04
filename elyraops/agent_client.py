@@ -5,20 +5,30 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from . import security
+
 
 class AgentUnavailable(RuntimeError):
     pass
 
 
-def investigate(case_id:str) -> dict:
+def investigate(case_id:str, organization:str | None = None) -> dict:
     base=os.environ.get("ELYRA_AGENT_URL", "").strip().rstrip("/")
     parsed=urlparse(base)
     if parsed.scheme!="http" or parsed.hostname not in {"127.0.0.1","localhost"} or parsed.username or parsed.password or parsed.path not in {"","/"}:
         raise AgentUnavailable("Agent URL must be a trusted local http://127.0.0.1:<port> endpoint")
     headers={"Content-Type":"application/json"}
-    if os.environ.get("ELYRA_AGENT_TOKEN"):
-        headers["X-Agent-Token"]=os.environ["ELYRA_AGENT_TOKEN"]
-    request=Request(base+"/v1/investigate",json.dumps({"case_id":case_id}).encode(),headers,method="POST")
+    internal=os.environ.get("ELYRA_AGENT_TOKEN", "")
+    if security.enabled() and len(internal) < 32:
+        raise AgentUnavailable("An internal agent token of at least 32 characters is required")
+    if internal:
+        headers["X-Agent-Token"]=internal
+    if security.enabled() and not organization:
+        raise AgentUnavailable("Scoped organization required for guarded agent request")
+    body={"case_id":case_id}
+    if organization is not None:
+        body["organization"]=organization
+    request=Request(base+"/v1/investigate",json.dumps(body).encode(),headers,method="POST")
     try:
         with urlopen(request,timeout=60) as response:
             result=json.load(response)
