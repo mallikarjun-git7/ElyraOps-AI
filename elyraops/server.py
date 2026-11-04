@@ -175,15 +175,34 @@ class Handler(BaseHTTPRequestHandler):
             return self.write_json({"error": str(exc)}, 400)
 
 
+def validate_local_listener(host: str) -> None:
+    """Only the explicitly opted-in Docker Compose bridge may listen on all interfaces.
+
+    Compose must publish the dashboard to the HOST loopback interface only.
+    The container listener itself cannot verify Docker's host port binding.
+    """
+    compose_mode = os.environ.get("ELYRA_LOCAL_COMPOSE", "") == "1"
+    guarded = security.enabled()
+    if compose_mode:
+        if host != "0.0.0.0" or not guarded:
+            raise RuntimeError("Local Compose mode needs guarded authentication and container binding")
+        if not os.environ.get("ELYRA_CASES_DATABASE_URL", "").strip():
+            raise RuntimeError("Local Compose mode requires the PostgreSQL case backend")
+        if os.environ.get("ELYRA_RAG_RLS_MODE", "") != "required":
+            raise RuntimeError("Local Compose mode requires secure RAG RLS")
+        return
+    if guarded and host not in {"127.0.0.1", "localhost"}:
+        raise RuntimeError("Guarded demo must bind to localhost; public exposure is unsupported")
+
+
 def run():
-    core.initialize()
     host = os.environ.get("HOST", "127.0.0.1")
+    validate_local_listener(host)  # Validate before binding the socket.
+    core.initialize()
     port = int(os.environ.get("PORT", "8080"))
     httpd = ThreadingHTTPServer((host, port), Handler)
     mode = "AGENT SERVICE" if os.environ.get("ELYRA_AGENT_URL") else "SIMULATION MODE"
     security_mode = "GUARDED LOCAL API" if security.enabled() else "UNGUARDED DEMO"
-    if security.enabled() and host not in {"127.0.0.1", "localhost"}:
-        raise RuntimeError("Guarded demo must bind to localhost; public exposure is unsupported")
     print(f"ElyraOps AI demo at http://{host}:{port} | {mode} | {security_mode}", flush=True)
     httpd.serve_forever()
 

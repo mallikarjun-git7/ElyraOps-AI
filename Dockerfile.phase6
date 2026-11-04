@@ -1,0 +1,18 @@
+# Local-only demonstration image; Python 3.13 matches GitHub Actions.
+FROM python:3.13-slim
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    HOME=/tmp \
+    XDG_CACHE_HOME=/tmp/.cache
+COPY requirements-agent.txt requirements-rag.txt ./
+RUN python -m pip install --no-cache-dir -r requirements-rag.txt \
+    && useradd --create-home --uid 10001 --shell /usr/sbin/nologin elyra
+COPY --chown=elyra:elyra elyraops/ ./elyraops/
+COPY --chown=elyra:elyra agent_service/ ./agent_service/
+COPY --chown=elyra:elyra web/ ./web/
+COPY --chown=elyra:elyra scripts/phase6_smoke.py ./scripts/phase6_smoke.py
+RUN mkdir -p /app/data && chown elyra:elyra /app/data
+USER elyra
+CMD ["python", "-m", "elyraops.server"]

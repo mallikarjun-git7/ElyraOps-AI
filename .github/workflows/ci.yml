@@ -76,3 +76,34 @@ jobs:
           source .env.rls
           set +a
           python -m unittest discover -s tests -p test_secure_rag_phase4.py -v
+
+  phase6-docker-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Validate Phase 6 Compose configuration with synthetic placeholders
+        env:
+          ELYRA_CASES_DATABASE_URL: postgresql://elyra_cases_runtime:ci-placeholder@rag-db:5432/elyra_rag
+          ELYRA_AGENT_TOKEN: ci-synthetic-only-do-not-deploy-1111111111
+          ELYRA_ACCESS_TOKENS_JSON: '{}'
+        run: docker compose -f compose.phase6.yml config --quiet
+      - name: Build Python 3.13 deployment image
+        run: docker build -f Dockerfile.phase6 -t elyraops-phase6:ci .
+      - name: Smoke test both services over localhost (no real credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'docker rm -f elyra-phase6-ci-dashboard elyra-phase6-ci-agent >/dev/null 2>&1 || true' EXIT
+          docker run -d --rm --name elyra-phase6-ci-agent \
+            -p 127.0.0.1:18091:8091 elyraops-phase6:ci \
+            python -m uvicorn agent_service.app:app --host 0.0.0.0 --port 8091
+          docker run -d --rm --name elyra-phase6-ci-dashboard \
+            -e HOST=0.0.0.0 -e PORT=8082 \
+            -p 127.0.0.1:18082:8082 elyraops-phase6:ci \
+            python -m elyraops.server
+          python scripts/phase6_smoke.py \
+            --dashboard-url http://127.0.0.1:18082 \
+            --agent-url http://127.0.0.1:18091
+          # A successful smoke test establishes container liveness only.
+          # Existing secure-rag-postgres tests separately verify tenant RLS.

@@ -1,0 +1,64 @@
+# Uses existing (already initialized) Phase 4 PostgreSQL pgvector Docker network.
+# No PostgreSQL volume is created, migrated or modified by this Compose file.
+name: elyraops-phase6
+x-base-env: &base-env
+  ELYRA_SECURITY_MODE: required
+  ELYRA_RAG_RLS_MODE: required
+  ELYRA_LOCAL_COMPOSE: "1"
+  ELYRA_CASES_DATABASE_URL: ${ELYRA_CASES_DATABASE_URL:?Run bash scripts/phase6_local.sh up}
+  ELYRA_AGENT_TOKEN: ${ELYRA_AGENT_TOKEN:?Source local security config first}
+  ELYRA_DB_PATH: /app/data/elyraops.db
+  ELYRA_AGENT_TIMEOUT_SECONDS: "60"
+x-base-service: &base-service
+  build:
+    context: .
+    dockerfile: Dockerfile.phase6
+  image: elyraops-phase6:local
+  read_only: true
+  user: "10001:10001"
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs:
+    - /app/data:rw,nosuid,nodev,size=64m,uid=10001,gid=10001
+    - /tmp:rw,nosuid,nodev,size=64m
+  init: true
+  restart: unless-stopped
+  networks: [elyra-rag]
+services:
+  elyra-agent:
+    <<: *base-service
+    command: ["python", "-m", "uvicorn", "agent_service.app:app", "--host", "0.0.0.0", "--port", "8091", "--workers", "1"]
+    environment:
+      <<: *base-env
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    expose: ["8091"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/ready', timeout=4).read()"]
+      interval: 15s
+      timeout: 6s
+      retries: 6
+      start_period: 25s
+  elyra-dashboard:
+    <<: *base-service
+    depends_on:
+      elyra-agent:
+        condition: service_healthy
+    command: ["python", "-m", "elyraops.server"]
+    environment:
+      <<: *base-env
+      HOST: 0.0.0.0
+      PORT: "8082"
+      ELYRA_AGENT_URL: http://elyra-agent:8091
+      ELYRA_ACCESS_TOKENS_JSON: ${ELYRA_ACCESS_TOKENS_JSON:?Source local security config first}
+    ports:
+      - "127.0.0.1:18082:8082"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/health', timeout=4).read()"]
+      interval: 15s
+      timeout: 6s
+      retries: 6
+      start_period: 15s
+networks:
+  elyra-rag:
+    external: true
+    name: ${ELYRA_RAG_DOCKER_NETWORK:-elyraops-rag_default}

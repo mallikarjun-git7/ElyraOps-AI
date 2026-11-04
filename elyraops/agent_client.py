@@ -16,8 +16,13 @@ class AgentUnavailable(RuntimeError):
 def investigate(case_id:str, organization:str | None = None) -> dict:
     base=os.environ.get("ELYRA_AGENT_URL", "").strip().rstrip("/")
     parsed=urlparse(base)
-    if parsed.scheme!="http" or parsed.hostname not in {"127.0.0.1","localhost"} or parsed.username or parsed.password or parsed.path not in {"","/"}:
-        raise AgentUnavailable("Agent URL must be a trusted local http://127.0.0.1:<port> endpoint")
+    local = parsed.hostname in {"127.0.0.1", "localhost"}
+    compose = (os.environ.get("ELYRA_LOCAL_COMPOSE", "") == "1"
+               and parsed.hostname == "elyra-agent" and parsed.port == 8091)
+    if (parsed.scheme != "http" or not (local or compose) or parsed.username
+            or parsed.password or parsed.path not in {"", "/"}
+            or parsed.query or parsed.fragment):
+        raise AgentUnavailable("Agent URL must be a trusted local or Compose-internal endpoint")
     headers={"Content-Type":"application/json"}
     rid = obs.current_request_id()
     if rid:

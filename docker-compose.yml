@@ -1,7 +1,7 @@
 services:
   elyraops:
     build: .
-    ports: ["8080:8080"]
+    ports: ["127.0.0.1:8080:8080"]
     environment:
       HOST: 0.0.0.0
       PORT: 8080

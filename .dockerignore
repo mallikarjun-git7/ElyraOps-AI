@@ -1,8 +1,14 @@
-.git
-__pycache__
-*.pyc
-.venv
-.pytest_cache
+# Never send private local credentials or persistent data to the build context.
+.git/
+.venv/
+.env
+.env.*
 data/
+__pycache__/
+*.py[cod]
+.pytest_cache/
 *.db
+*.sqlite*
 *.zip
+*.log
+.DS_Store
