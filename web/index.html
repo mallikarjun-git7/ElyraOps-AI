@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="theme-color" content="#F8F6F0"/>
+<title>ElyraOps AI — Agentic Operations Workspace</title>
+<link rel="stylesheet" href="/styles.css"/>
+<script src="/app.js" defer></script>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><div class="brandmark"><span>✦</span></div><div><strong>ElyraOps <em>AI</em></strong><small>INTELLIGENT OPERATIONS</small></div></div>
+    <div class="workspace"><span class="workspace-icon">E</span><div><strong>Enterprise workspace</strong><small>Demo organization</small></div><span class="chevron">⌄</span></div>
+    <div class="side-label">WORKSPACE</div>
+    <nav class="nav">
+      <button class="navitem active" data-view="overview"><span>◫</span> Overview</button>
+      <button class="navitem" data-view="cases"><span>▣</span> Case operations <b class="count" id="navCount">5</b></button>
+      <button class="navitem" data-view="knowledge"><span>▤</span> Knowledge hub</button>
+      <button class="navitem" data-view="activity"><span>◷</span> Agent activity</button>
+    </nav>
+    <div class="side-label subspace">SYSTEM</div>
+    <div class="nav muted"><div class="navitem not-clickable"><span>♧</span> Agent orchestration</div><div class="navitem not-clickable"><span>⌘</span> Connections <span class="mini-soon">Soon</span></div></div>
+    <div class="sidebar-bottom"><div class="note-icon">✧</div><strong>Build with clarity.</strong><p>Trusted workflows start with verified decisions.</p><span class="demo-tag">● SIMULATION ENVIRONMENT</span></div>
+    <div class="profile"><div class="avatar">OP</div><div><strong>Demo operator</strong><small>Local development</small></div><span>⋯</span></div>
+  </aside>
+  <main class="main">
+    <header class="topbar"><div class="crumbs">Workspace <span>/</span> <strong id="pageCrumb">Overview</strong></div><div class="topright"><span class="live-indicator">● Platform active</span><span class="top-sep"></span><span class="shortcut">⌘ K</span><span class="top-avatar">OP</span></div></header>
+    <div class="page" id="page"><div class="loading">Loading workspace...</div></div>
+    <footer>ELYRAOPS AI <span>·</span> A reproducible portfolio prototype <span>·</span> Human approval required for simulated actions</footer>
+  </main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -1,0 +1,13 @@
+services:
+  elyraops:
+    build: .
+    ports: ["8080:8080"]
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      ELYRA_DB_PATH: /app/data/elyraops.db
+    volumes:
+      - elyraops_data:/app/data
+    restart: unless-stopped
+volumes:
+  elyraops_data:
