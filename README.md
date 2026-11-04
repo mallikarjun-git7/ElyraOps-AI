@@ -1,90 +1,82 @@
 # ElyraOps AI
 
-**Development update:** Phase 2 provides optional Gemini/PostgreSQL hybrid RAG. Phase 3A adds opt-in **local-only** bearer-token RBAC and scoped case queries. See [SECURITY_PHASE3.md](SECURITY_PHASE3.md) for setup and limitations. This is **not OIDC, PostgreSQL RLS, or production authentication**.
+**Enterprise-style agentic operations prototype — a localhost-only, approval-gated demonstration.**
 
-**Enterprise Agentic Operations Platform** — an original, working **simulation-mode** portfolio prototype with a warm ivory/cream interface, evidence-backed triage, approval-gated recommendations, persistent case records, and traceable event history.
+ElyraOps AI turns a *synthetic* incident into a traceable recommendation: classify the case, retrieve relevant policy evidence, prepare a bounded resolution with LangGraph and optionally Gemini, and require a human decision before recording a **simulated** execution. It never issues a payment/refund, changes a real business system, or processes real customer data.
 
-> **Implementation status:** The default dashboard is a *local deterministic workflow simulator*. An optional LangGraph + FastAPI service (`agent_service/`) provides a genuine workflow graph and can call an LLM for the rationale when a model API key is configured. It does **not** implement autonomous business actions, a Java microservice, Kafka, production auth, or production deployment. Those features are in the roadmap. No payment is issued; no external business system is changed. Never use real customer records in this demo.
+**[Architecture](docs/portfolio/ARCHITECTURE.md) · [2-minute demo](docs/portfolio/DEMO.md) · [Benchmark protocol](docs/portfolio/BENCHMARKS.md) · [Screenshots checklist](docs/portfolio/SCREENSHOTS.md) · [Limitations](docs/portfolio/LIMITATIONS.md)**
 
-## Optional LangGraph + FastAPI extension
+## What is implemented
 
-See [AGENTIC_PHASE1.md](AGENTIC_PHASE1.md) for a two-terminal local setup. **Without `ELYRA_AGENT_URL`, the existing app remains a simulation.** With the agent service connected and an API key configured, it uses an LLM only for a constrained, evidence-grounded explanation; approval and simulated execution remain unchanged.
+| Layer | Verified implementation |
+| --- | --- |
+| User experience | Responsive HTML/CSS/JavaScript dashboard: incidents, policies, activity timeline, sign-in and simulated approvals |
+| API / orchestration | Python HTTP dashboard, FastAPI agent service, LangGraph triage → retrieval → resolution |
+| LLM | Gemini-backed, policy-grounded rationale when a private API key is supplied; deterministic offline mode exists |
+| Search | Hybrid PostgreSQL full-text + pgvector semantic search, rank fusion, evidence citations, domain filters |
+| Persistence | PostgreSQL cases and audit events; separate policy-vector table; local SQLite supports deterministic demo/knowledge paths |
+| Security demonstration | Local bearer-token roles, organization-scoped access, non-owner PostgreSQL runtime roles and enforced RLS on cases/events and RAG documents |
+| Reliability | Health/readiness endpoints, JSON request logs, correlation IDs, protected Prometheus-format metrics and bounded agent timeouts |
+| Deployment and CI | Local Docker Compose, non-root images, health checks, Python 3.12/3.13 tests, real PostgreSQL RLS CI and container smoke CI |
 
-## Screens and behavior
+See the [project architecture](docs/portfolio/ARCHITECTURE.md) for which component owns each action and where trust boundaries remain.
 
-- Creamy-white responsive overview dashboard, case operations, knowledge hub, and workflow activity.
-- Five seeded incidents across Billing, Logistics, Identity, Procurement and Support.
-- Multi-stage *simulated* agent workflow: classifier → retrieval → resolution planner.
-- Transparent local TF-IDF-like keyword policy retrieval, with evidence references and scores.
-- Human approval/rejection before **simulated execution**.
-- Persistent SQLite case and audit-event store. Re-running a submitted investigation does not duplicate actions.
-- Create realistic custom cases and investigate them from the browser.
+## See the workflow
 
-## Run locally (no installs beyond Python)
+1. Sign in as **Analyst** to the guarded local demo.
+2. Create a synthetic Billing case describing a duplicate subscription charge.
+3. Run the LangGraph investigation. Inspect retrieved **POL-001** evidence and the suggested finance-review action.
+4. Observe **Pending approval**. The Analyst cannot approve the case.
+5. Sign in as **Approver**, select **Approve simulation**, and inspect the recorded audit events. **No external refund is executed.**
 
-Requirements: Python 3.10+
+These steps were exercised with a local Docker deployment. Reproduce them using [DEMO.md](docs/portfolio/DEMO.md), which also describes screenshots and security precautions.
 
-```bash
-python3 -m elyraops.server
-```
+## Run it yourself (localhost only)
 
-Open **http://127.0.0.1:8080**. Investigation, approval, case creation and navigation work without a model API key. This demo makes no external requests.
-
-Use `PORT=8090 python3 -m elyraops.server` to select another port. The default app binds to `127.0.0.1` deliberately.
-
-## Tests
-
-```bash
-python3 -m unittest discover -s tests -v
-```
-
-## Docker deployment (for demos, not public customer data)
+Prerequisites: Docker Desktop; an existing initialized local pgvector/PostgreSQL container and its Phase 3/4 tenant-RLS roles; the ignored `.env.security` and `.env.rls` generated by the repository's earlier setup; a Gemini API key for real semantic/LLM investigation.
 
 ```bash
-docker compose up --build -d
-curl http://localhost:8080/health
+# Only after completing the earlier local security + PostgreSQL setup:
+bash scripts/phase6_local.sh up
+bash scripts/phase6_local.sh check
 ```
 
-Docker uses a named volume for the SQLite database. **Important:** The default Docker demo remains unauthenticated. Optional Phase 3A guarded mode needs explicit setup and is not production-ready. Do *not* expose this demo publicly.
+Open **http://127.0.0.1:18082**. Use a local Analyst token from your private `.env.login-tokens` file. The Docker agent is not publicly exposed. The helper reuses your existing database volume; **do not use `docker compose down -v`**.
 
-## HTTP API
+For a simpler, unguarded deterministic simulation, `python3 -m elyraops.server` starts the standalone dashboard at `http://127.0.0.1:8080` with no Gemini dependency. This mode does *not* demonstrate PostgreSQL tenant isolation. Detailed setup is documented in [DEPLOYMENT_PHASE6.md](DEPLOYMENT_PHASE6.md), [SECURE_RAG_PHASE4.md](SECURE_RAG_PHASE4.md) and [POSTGRES_RLS_PHASE3B.md](POSTGRES_RLS_PHASE3B.md).
 
-| Method | Path | Behavior |
-| --- | --- | --- |
-| GET | `/health` | Health check |
-| GET | `/api/dashboard` | Summary counts |
-| GET | `/api/cases` | Cases |
-| POST | `/api/cases` | Create demo case |
-| GET | `/api/cases/EC-1042` | Case, evidence, audit events |
-| POST | `/api/cases/EC-1042/investigate` | Deterministic multi-stage investigation |
-| POST | `/api/cases/EC-1042/decision` | Record approved simulation or rejection |
-| GET | `/api/knowledge` | Source policy documents |
-
-Example:
+## Tests and engineering evidence
 
 ```bash
-curl -s -X POST http://localhost:8080/api/cases/EC-1042/investigate -H 'Content-Type: application/json' -d '{}'
-curl -s http://localhost:8080/api/cases/EC-1042
-curl -s -X POST http://localhost:8080/api/cases/EC-1042/decision -H 'Content-Type: application/json' -d '{"decision":"approve","actor":"Demo operator"}'
+python -m unittest discover -s tests -v
+python -m compileall -q elyraops agent_service
 ```
 
-## Engineering roadmap for SDE-quality flagship
+The CI workflow independently checks Python 3.12 and 3.13, disposable PostgreSQL RLS integration, and both Docker services' HTTP readiness. Live Gemini integration requires a private API key and is intentionally optional.
 
-Each phase requires code, tests, measured results, and deployment verification before being described as completed:
+**Performance claims must be measured, not assumed.** The local k6 portfolio smoke probes only **GET /health** and **GET /api/auth/config** on the Docker dashboard. It is **not a database, agent/LLM, vector-search, or end-to-end workload benchmark**. The [benchmark protocol](docs/portfolio/BENCHMARKS.md) shows how to collect a run and turn its JSON into an evidence-backed Markdown report without changing application data.
 
-1. **Production-grade Java service:** Spring Boot 4, PostgreSQL, Spring Security / OIDC, tenant isolation, REST contract and transactional outbox.
-2. **Real agent service:** FastAPI and LangGraph with real LLM tool use, schema validation, persistent workflow checkpoints, evidence citations, and human-in-the-loop interruptions.
-3. **Enterprise RAG:** document processing, permission-aware hybrid search, pgvector, citations, evaluation datasets, and adversarial prompt-injection tests.
-4. **Distributed orchestration:** Kafka events, consumer retries, dead-letter queues, idempotency keys, outbox relay, and realistic concurrent integration tests.
-5. **Governed external actions:** mock billing, logistics and IT ticket APIs; tool allowlists, OIDC role checks, approvals, policy enforcement, and audit integrity.
-6. **Reliability and deployment:** OpenTelemetry, Langfuse, Prometheus, Grafana, k6, Testcontainers, CI/CD, AWS deployment and recovery drills.
+## Architecture at a glance
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for implementation decisions and [ORIGINS.md](ORIGINS.md) for attribution policy and optional DocsGPT integration.
+```mermaid
+flowchart LR
+  U[Browser / Analyst & Approver] --> D[Python Dashboard\nlocal HTTP + RBAC]
+  D -->|tenant-scoped cases / decisions| P[(PostgreSQL\ncases + audit events)]
+  D -->|internal service token| A[FastAPI Agent]
+  A --> G[LangGraph\ntriage · retrieve · resolve]
+  G --> R[(PostgreSQL + pgvector\nRAG policies)]
+  G -. optional model calls .-> M[Gemini API]
+  A -->|proposal + audit events| P
+```
 
-## Current tech stack
+## Security and scope
 
-**Python standard library, SQLite, HTML/CSS/JavaScript, Docker, GitHub Actions** for the default demo, with optional **FastAPI, LangGraph, and OpenAI API** integration. These are *implemented*, not aspirational. The advanced stack above is the intended target for subsequent development.
+This is a **portfolio-grade local demonstration, not a production SaaS**. It uses locally generated demo tokens rather than OIDC/MFA, assumes the trusted local host and Docker daemon, passes local secrets as environment values, and uses organization strings rather than canonical tenant IDs. PostgreSQL RLS is defense in depth; it does not protect against a stolen database credential or arbitrary privileged SQL. The system has no real payment/execution integration, cloud hosting, or published performance SLO. See [LIMITATIONS.md](docs/portfolio/LIMITATIONS.md).
 
-## Repository ownership
+## Source, decisions, and attribution
 
-This prototype's application code was created independently for this deliverable, and is not a disguised DocsGPT clone. If you include original DocsGPT source as a dependency or derivative, preserve all MIT notices and credit upstream. Do not claim that original upstream code was independently authored.
+- [ARCHITECTURE.md](ARCHITECTURE.md) — earlier implementation decisions.
+- [ORIGINS.md](ORIGINS.md) — source attribution policy.
+- [AGENTIC_PHASE1.md](AGENTIC_PHASE1.md), [ENTERPRISE_RAG_PHASE2.md](ENTERPRISE_RAG_PHASE2.md), [SECURITY_PHASE3.md](SECURITY_PHASE3.md), [POSTGRES_RLS_PHASE3B.md](POSTGRES_RLS_PHASE3B.md), [SECURE_RAG_PHASE4.md](SECURE_RAG_PHASE4.md), [OBSERVABILITY_PHASE5.md](OBSERVABILITY_PHASE5.md), [DEPLOYMENT_PHASE6.md](DEPLOYMENT_PHASE6.md) — incremental engineering phases and trade-offs.
+
+**Implementation boundaries are intentional:** approval is real within the demonstration workflow; **execution is simulated**. Any outside contributions or reused components must retain proper attribution.
