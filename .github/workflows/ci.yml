@@ -1,16 +1,36 @@
-name: ElyraOps tests
+name: ElyraOps CI
+
 on:
   push:
   pull_request:
+
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13']
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
-      - name: Unit tests
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-agent.txt
+
+      - name: Run all tests
         run: python -m unittest discover -s tests -v
-      - name: Syntax validation
-        run: python -m compileall -q elyraops
+
+      - name: Validate Python syntax
+        run: python -m compileall -q elyraops agent_service

@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from . import core
+from . import agent_client
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -41,7 +42,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = unquote(urlparse(self.path).path)
         if path == "/health":
-            return self.write_json({"status": "ok", "service": "elyraops-demo", "mode": "simulation"})
+            return self.write_json({"status": "ok", "service": "elyraops-demo", "mode": "agent-service" if os.environ.get("ELYRA_AGENT_URL") else "simulation"})
         if path == "/api/dashboard":
             return self.write_json(core.dashboard())
         if path == "/api/cases":
@@ -81,9 +82,11 @@ class Handler(BaseHTTPRequestHandler):
             if match:
                 case_id, operation = match.groups()
                 if operation == "investigate":
-                    return self.write_json(core.investigate(case_id))
+                    return self.write_json(agent_client.investigate(case_id) if os.environ.get("ELYRA_AGENT_URL") else core.investigate(case_id))
                 return self.write_json(core.decide(case_id, payload.get("decision"), payload.get("actor")))
             return self.write_json({"error": "Not found"}, 404)
+        except agent_client.AgentUnavailable as exc:
+            return self.write_json({"error": str(exc)}, 502)
         except KeyError:
             return self.write_json({"error": "Case not found"}, 404)
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
@@ -95,7 +98,8 @@ def run():
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8080"))
     httpd = ThreadingHTTPServer((host, port), Handler)
-    print(f"ElyraOps AI demo at http://{host}:{port} | SIMULATION MODE | No authentication", flush=True)
+    mode = "AGENT SERVICE" if os.environ.get("ELYRA_AGENT_URL") else "SIMULATION MODE"
+    print(f"ElyraOps AI demo at http://{host}:{port} | {mode} | No authentication", flush=True)
     httpd.serve_forever()
 
 if __name__ == "__main__":

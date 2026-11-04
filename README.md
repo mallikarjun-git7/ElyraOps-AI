@@ -2,7 +2,11 @@
 
 **Enterprise Agentic Operations Platform** — an original, working **simulation-mode** portfolio prototype with a warm ivory/cream interface, evidence-backed triage, approval-gated recommendations, persistent case records, and traceable event history.
 
-> **Implementation status:** This repository currently implements a *local deterministic workflow simulator*, **not** an actual LLM-powered agent, vector RAG, Java microservice, Kafka event stream, production auth, or production deployment. Those features are in the roadmap. No payment is issued; no external business system is changed. Never use real customer records in this demo.
+> **Implementation status:** The default dashboard is a *local deterministic workflow simulator*. An optional LangGraph + FastAPI service (`agent_service/`) provides a genuine workflow graph and can call an LLM for the rationale when a model API key is configured. It does **not** implement autonomous business actions, vector RAG, a Java microservice, Kafka, production auth, or production deployment. Those features are in the roadmap. No payment is issued; no external business system is changed. Never use real customer records in this demo.
+
+## Optional LangGraph + FastAPI extension
+
+See [AGENTIC_PHASE1.md](AGENTIC_PHASE1.md) for a two-terminal local setup. **Without `ELYRA_AGENT_URL`, the existing app remains a simulation.** With the agent service connected and an API key configured, it uses an LLM only for a constrained, evidence-grounded explanation; approval and simulated execution remain unchanged.
 
 ## Screens and behavior
 
@@ -77,7 +81,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for implementation decisions and [ORIGINS
 
 ## Current tech stack
 
-**Python standard library, SQLite, HTML/CSS/JavaScript, Docker, GitHub Actions**. These are *implemented*, not aspirational. The advanced stack above is the intended target for subsequent development.
+**Python standard library, SQLite, HTML/CSS/JavaScript, Docker, GitHub Actions** for the default demo, with optional **FastAPI, LangGraph, and OpenAI API** integration. These are *implemented*, not aspirational. The advanced stack above is the intended target for subsequent development.
 
 ## Repository ownership
 
