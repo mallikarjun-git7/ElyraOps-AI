@@ -22,7 +22,11 @@ class InvestigationRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status":"ok", "service":"elyraops-agents", "llm_enabled":bool(os.environ.get("OPENAI_API_KEY"))}
+    gemini = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+    openai = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+    return {"status":"ok", "service":"elyraops-agents",
+            "llm_enabled":gemini or openai,
+            "llm_provider":"gemini" if gemini else ("openai" if openai else "demo")}
 
 
 @app.post("/v1/investigate")

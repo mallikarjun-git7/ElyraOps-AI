@@ -38,7 +38,7 @@ def plan_node(state: CaseState) -> dict:
     action,policy=core.ACTIONS.get(state["domain"],(
         "Escalate case for manual review", "Human review is required."))
     ids=", ".join(d["id"] for d in state["evidence"]) or "no matching policy"
-    if os.environ.get("OPENAI_API_KEY", "").strip():
+    if os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("OPENAI_API_KEY", "").strip():
         rationale=draft_rationale(state["case"], state["evidence"],action)
         mode="langgraph-llm"
     else:

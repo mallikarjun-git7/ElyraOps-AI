@@ -14,10 +14,14 @@ class ModelUnavailable(RuntimeError):
 
 def draft_rationale(case: dict, evidence: list[dict], required_action: str) -> str:
     """Return a short user-visible justification, not hidden chain-of-thought."""
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    key = gemini_key or os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
-        raise ModelUnavailable("OPENAI_API_KEY is not configured")
-    model = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+        raise ModelUnavailable("Neither GEMINI_API_KEY nor OPENAI_API_KEY is configured")
+    model = (os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+             if gemini_key else os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"))
+    endpoint = ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+                if gemini_key else "https://api.openai.com/v1/chat/completions")
     source_ids = [hit["id"] for hit in evidence]
     source_content = [{"id": d["id"], "content": d["excerpt"][:800]} for d in evidence]
     payload = {
@@ -47,7 +51,7 @@ def draft_rationale(case: dict, evidence: list[dict], required_action: str) -> s
                       "required":["reason"],"additionalProperties":False}}},
     }
     req = Request(
-        "https://api.openai.com/v1/chat/completions",
+        endpoint,
         data=json.dumps(payload).encode("utf-8"),
         headers={"Authorization":f"Bearer {key}", "Content-Type":"application/json"},
         method="POST",
