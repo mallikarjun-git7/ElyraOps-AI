@@ -113,6 +113,13 @@ class DashboardObservabilityTests(unittest.TestCase):
         out = io.StringIO()
         with redirect_stdout(out):
             status,headers,_ = self.get("/health?secret=SHOULD_NOT_LOG", {"X-Request-ID":"evil-not-a-correlation-id"})
+            # HTTP response completion can precede the handler's finally/logging
+            # block on another thread; wait briefly without relying on arbitrary sleeps.
+            import time
+            for _ in range(40):
+                if '"route":"health"' in out.getvalue():
+                    break
+                time.sleep(0.005)
         self.assertEqual(status,200)
         self.assertRegex(headers["X-Request-ID"],r"^[0-9a-f]{32}$")
         self.assertNotIn("SHOULD_NOT_LOG",out.getvalue())
